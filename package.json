@@ -2,9 +2,10 @@
   "name": "@yworks-internal/html-new-stubs",
   "version": "1.0.0",
   "description": "",
-  "main": "index.ts",
+  "main": "src/index.ts",
   "scripts": {
-    "convert": "node index node_modules/typescript/lib/lib.dom.d.ts",
+    "convert": "node dist/index.js node_modules/typescript/lib/lib.dom.d.ts build",
+    "convert2": "node dist/index.js ./node_modules/typescript/lib/lib.dom.d.ts build",
     "build": "tsc",
     "watch": "tsc --watch"
   },
@@ -12,15 +13,25 @@
     "typescript": "^5.2.2"
   },
   "devDependencies": {
+    "@types/fs-extra": "^11.0.0",
     "@types/node": "~20.8.0",
+    "fs-extra": "^11.0.0",
     "prettier": "3.0.3",
     "ts-node": "^10.9.1"
   },
+  "files": [
+    "src/*.ts"
+  ],
   "type": "module",
   "author": "",
   "license": "MIT",
   "publishConfig": {
     "registry": "https://npm.yworks.home"
+  },
+  "prettier": {
+    "semi": false,
+    "singleQuote": true,
+    "tabWidth": 2
   },
   "ts-node": {
     "esm": true
