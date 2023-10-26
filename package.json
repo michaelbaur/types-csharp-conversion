@@ -5,7 +5,7 @@
   "main": "src/index.ts",
   "scripts": {
     "convert": "node dist/index.js node_modules/typescript/lib/lib.dom.d.ts build",
-    "convert2": "node dist/index.js ./node_modules/typescript/lib/lib.dom.d.ts build",
+    "convert2": "node dist/index.js ./node_modules/typescript/lib/lib.es5.d.ts build",
     "build": "tsc",
     "watch": "tsc --watch"
   },

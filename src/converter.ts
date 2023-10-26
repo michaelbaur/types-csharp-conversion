@@ -8,7 +8,11 @@ export const preamble = `// ReSharper disable InconsistentNaming, RedundantExten
 
 `
 
-const reservedMemberNames: Record<string, boolean> = {
+type Context = {
+  sourceFile: ts.SourceFile
+}
+
+const reservedNames: Record<string, boolean> = {
   as: true,
   base: true,
   checked: true,
@@ -20,22 +24,10 @@ const reservedMemberNames: Record<string, boolean> = {
   operator: true,
   public: true,
   switch: true,
+  this: true,
 }
 
-function getBaseTypes(node: ts.InterfaceDeclaration) {
-  if (!node.heritageClauses) {
-    return ''
-  }
-
-  const typeNames = node.heritageClauses[0].types.map(
-      // TODO Support generics
-      // TODO Call getTypeName
-      (value) => (value.expression as ts.Identifier).text,
-  )
-  return `: ${typeNames.join(', ')} `
-}
-
-function getTypeName(type: ts.TypeNode) {
+function getTypeName(type: ts.TypeNode, context: Context): string {
   switch (type.kind) {
     case ts.SyntaxKind.StringKeyword:
       return 'string'
@@ -43,72 +35,128 @@ function getTypeName(type: ts.TypeNode) {
       return 'double'
     case ts.SyntaxKind.BooleanKeyword:
       return 'bool'
-    default:
-      // TODO support more specific types, start with non-union types
-      // TODO Support generics
-      // TODO support for Nullable, CanBeUndefined (| null, | undefined)
+    case ts.SyntaxKind.AnyKeyword:
       return 'object'
+    case ts.SyntaxKind.VoidKeyword:
+      return 'void'
+    case ts.SyntaxKind.SymbolKeyword:
+      return 'Symbol'
   }
+
+  if (ts.isTypeReferenceNode(type)) {
+    return (type.typeName as ts.Identifier).text
+  }
+  if (ts.isArrayTypeNode(type)) {
+    return getTypeName(type.elementType, context) + '[]'
+  }
+
+  // TODO support more specific types, start with non-union types
+  // TODO Support generics
+  // TODO support for Nullable, CanBeUndefined (| null, | undefined)
+  return `object /* ${type.getText(context.sourceFile)} */`
 }
 
-function getMemberName(member: ts.PropertySignature | ts.MethodSignature) {
-  const name = (member.name as ts.StringLiteral).text
-  return !reservedMemberNames[name]
+function getSafeName(
+  member: ts.PropertySignature | ts.MethodSignature | ts.Identifier,
+  context: Context,
+): string {
+  const name = ts.isIdentifier(member)
+    ? member.text
+    : (member.name as ts.StringLiteral).text
+  // TODO Improve writting of reserved member names
+  return !reservedNames[name]
     ? name
+    : ts.isIdentifier(member)
+    ? `${name}Parameter`
     : ts.isPropertySignature(member)
     ? `${name}Property`
     : `${name}Method`
 }
 
-function isReadonly(modifiers: ts.NodeArray<ts.Modifier> | undefined): boolean {
-  return modifiers?.some(m => ts.isReadonlyKeywordOrPlusOrMinusToken(m)) ?? false
+function isReadonly(
+  modifiers: ts.NodeArray<ts.Modifier> | undefined,
+  context: Context,
+): boolean {
+  return (
+    modifiers?.some((m) => ts.isReadonlyKeywordOrPlusOrMinusToken(m)) ?? false
+  )
 }
 
 function getParameterList(
   parameterDeclaration: ts.NodeArray<ts.ParameterDeclaration>,
+  context: Context,
 ) {
   return parameterDeclaration
-    .map((para, index) => `${getTypeName(para.type!)} ${(para.name as Identifier).text}`) //`${} ${para.name}`)
+    .map(
+      (para, index) =>
+        `${getTypeName(para.type!, context)} ${getSafeName(
+          para.name as Identifier,
+          context,
+        )}`,
+    ) //`${} ${para.name}`)
     .join(', ')
 }
 
-function getMembers(node: ts.InterfaceDeclaration): string[] {
+function getBaseTypes(node: ts.InterfaceDeclaration, context: Context): string {
+  if (!node.heritageClauses) {
+    return ''
+  }
+
+  const typeNames = node.heritageClauses[0].types.map(
+    // TODO Support generics
+    // TODO Call getTypeName
+    (value) => (value.expression as ts.Identifier).text,
+  )
+  return `: ${typeNames.join(', ')} `
+}
+
+function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
   return node.members.map((member) => {
     if (ts.isPropertySignature(member)) {
       // TODO support modifier, especially readonly
-      const name = getMemberName(member)
-      const type = getTypeName(member.type!)
-      const readonly = isReadonly(member.modifiers)
+      const name = getSafeName(member, context)
+      const type = getTypeName(member.type!, context)
+      const readonly = isReadonly(member.modifiers, context)
       const accessors = 'get;' + (!readonly ? ' set;' : '')
       return `public new ${type} ${name} { ${accessors} }`
     }
     if (ts.isMethodSignature(member)) {
       const ms = member as ts.MethodSignature
-      const name = getMemberName(member)
-      const type = getTypeName(member.type!)
-      const parameters = getParameterList(ms.parameters)
+      const name = getSafeName(member, context)
+      const type = getTypeName(member.type!, context)
+      const parameters = getParameterList(ms.parameters, context)
       return `public new ${type} ${name}(${parameters});`
- 
     }
-    return `// TODO: Unsupported member: ${member.name}`
+    return `// TODO: Unsupported member: ${member.getText(context.sourceFile)}`
   })
 }
 
-export function getTypes(sourceFile: ts.SourceFile): string[] {
-  const interfaces: string[] = [
-    sourceFile.fileName.includes('lib.dom') ? 'public interface Error { }' : '',
-  ]
+export function getFileContent(sourceFile: ts.SourceFile): string[] {
+  const context = { sourceFile }
+  const interfaces: string[] = []
+
+  for (const match of sourceFile.text.matchAll(
+    /\/\/\/\s*<reference\s+lib="(?<libName>.*)"\s*\/>/g,
+  )) {
+    interfaces.push(`// TODO: Referenced lib: ${match.groups!.libName}`)
+  }
+
+  if (sourceFile.fileName.includes('lib.dom')) {
+    interfaces.push('public interface Error { }')
+  }
 
   ts.forEachChild(sourceFile, (node) => {
     if (ts.isInterfaceDeclaration(node)) {
       const name = node.name.text
       // TODO Support generics
-      const baseTypes = getBaseTypes(node)
-      const members = getMembers(node)
+      const baseTypes = getBaseTypes(node, context)
+      const members = getMembers(node, context)
       const typeContent =
         members.length === 0 ? '' : `\n  ${members.join('\n  ')}\n`
 
-      interfaces.push(`public partial interface ${name} ${baseTypes} {${typeContent}}`)
+      interfaces.push(
+        `public partial interface ${name} ${baseTypes} {${typeContent}}`,
+      )
     }
   })
 

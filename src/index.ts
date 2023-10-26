@@ -1,7 +1,7 @@
 import fs from 'fs-extra'
 import * as path from 'node:path'
 import ts from 'typescript'
-import { getTypes, preamble } from './converter.js'
+import { getFileContent, preamble } from './converter.js'
 
 /**
  * Prints out particular nodes from a source file
@@ -15,7 +15,7 @@ function extract(filename: string, targetDir: string): void {
   const sourceFile = program.getSourceFile(filename)!
   fs.emptyDirSync(targetDir)
 
-  const types = getTypes(sourceFile)
+  const types = getFileContent(sourceFile)
   const pagination = 500
   for (let i = 0; i * pagination < types.length; i++) {
     const targetFile = path.join(
