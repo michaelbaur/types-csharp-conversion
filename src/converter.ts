@@ -1,6 +1,24 @@
-import * as fs from 'node:fs'
-import * as path from 'node:path'
-import ts, { Identifier } from 'typescript'
+import ts, {
+  forEachChild,
+  Identifier,
+  InterfaceDeclaration,
+  isArrayTypeNode,
+  isIdentifier,
+  isInterfaceDeclaration,
+  isMethodSignature,
+  isPropertySignature,
+  isReadonlyKeywordOrPlusOrMinusToken,
+  isTypeReferenceNode,
+  MethodSignature,
+  Modifier,
+  NodeArray,
+  ParameterDeclaration,
+  PropertySignature,
+  SourceFile,
+  StringLiteral,
+  SyntaxKind,
+  TypeNode,
+} from 'typescript'
 
 export const preamble = `// ReSharper disable InconsistentNaming, RedundantExtendsListEntry
 #pragma warning disable CS0109 // Member does not hide an inherited member; new keyword is not required
@@ -9,7 +27,7 @@ export const preamble = `// ReSharper disable InconsistentNaming, RedundantExten
 `
 
 type Context = {
-  sourceFile: ts.SourceFile
+  sourceFile: SourceFile
 }
 
 const reservedNames: Record<string, boolean> = {
@@ -27,26 +45,26 @@ const reservedNames: Record<string, boolean> = {
   this: true,
 }
 
-function getTypeName(type: ts.TypeNode, context: Context): string {
+function getTypeName(type: TypeNode, context: Context): string {
   switch (type.kind) {
-    case ts.SyntaxKind.StringKeyword:
+    case SyntaxKind.StringKeyword:
       return 'string'
-    case ts.SyntaxKind.NumberKeyword:
+    case SyntaxKind.NumberKeyword:
       return 'double'
-    case ts.SyntaxKind.BooleanKeyword:
+    case SyntaxKind.BooleanKeyword:
       return 'bool'
-    case ts.SyntaxKind.AnyKeyword:
+    case SyntaxKind.AnyKeyword:
       return 'object'
-    case ts.SyntaxKind.VoidKeyword:
+    case SyntaxKind.VoidKeyword:
       return 'void'
-    case ts.SyntaxKind.SymbolKeyword:
+    case SyntaxKind.SymbolKeyword:
       return 'Symbol'
   }
 
-  if (ts.isTypeReferenceNode(type)) {
-    return (type.typeName as ts.Identifier).text
+  if (isTypeReferenceNode(type)) {
+    return (type.typeName as Identifier).text
   }
-  if (ts.isArrayTypeNode(type)) {
+  if (isArrayTypeNode(type)) {
     return getTypeName(type.elementType, context) + '[]'
   }
 
@@ -57,47 +75,40 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
 }
 
 function getSafeName(
-  member: ts.PropertySignature | ts.MethodSignature | ts.Identifier,
-  context: Context,
+  member: PropertySignature | MethodSignature | Identifier,
 ): string {
-  const name = ts.isIdentifier(member)
+  const name = isIdentifier(member)
     ? member.text
-    : (member.name as ts.StringLiteral).text
-  // TODO Improve writting of reserved member names
+    : (member.name as StringLiteral).text
+  // TODO Improve writing of reserved member names
   return !reservedNames[name]
     ? name
-    : ts.isIdentifier(member)
-    ? `${name}Parameter`
-    : ts.isPropertySignature(member)
-    ? `${name}Property`
-    : `${name}Method`
+    : isIdentifier(member)
+      ? `${name}Parameter`
+      : isPropertySignature(member)
+        ? `${name}Property`
+        : `${name}Method`
 }
 
-function isReadonly(
-  modifiers: ts.NodeArray<ts.Modifier> | undefined,
-  context: Context,
-): boolean {
-  return (
-    modifiers?.some((m) => ts.isReadonlyKeywordOrPlusOrMinusToken(m)) ?? false
-  )
+function isReadonly(modifiers: NodeArray<Modifier> | undefined): boolean {
+  return modifiers?.some((m) => isReadonlyKeywordOrPlusOrMinusToken(m)) ?? false
 }
 
 function getParameterList(
-  parameterDeclaration: ts.NodeArray<ts.ParameterDeclaration>,
+  parameterDeclaration: NodeArray<ParameterDeclaration>,
   context: Context,
 ) {
   return parameterDeclaration
     .map(
-      (para, index) =>
+      (para) =>
         `${getTypeName(para.type!, context)} ${getSafeName(
           para.name as Identifier,
-          context,
         )}`,
-    ) //`${} ${para.name}`)
+    )
     .join(', ')
 }
 
-function getBaseTypes(node: ts.InterfaceDeclaration, context: Context): string {
+function getBaseTypes(node: InterfaceDeclaration): string {
   if (!node.heritageClauses) {
     return ''
   }
@@ -105,24 +116,24 @@ function getBaseTypes(node: ts.InterfaceDeclaration, context: Context): string {
   const typeNames = node.heritageClauses[0].types.map(
     // TODO Support generics
     // TODO Call getTypeName
-    (value) => (value.expression as ts.Identifier).text,
+    (value) => (value.expression as Identifier).text,
   )
   return `: ${typeNames.join(', ')} `
 }
 
-function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
+function getMembers(node: InterfaceDeclaration, context: Context): string[] {
   return node.members.map((member) => {
-    if (ts.isPropertySignature(member)) {
+    if (isPropertySignature(member)) {
       // TODO support modifier, especially readonly
-      const name = getSafeName(member, context)
+      const name = getSafeName(member)
       const type = getTypeName(member.type!, context)
-      const readonly = isReadonly(member.modifiers, context)
+      const readonly = isReadonly(member.modifiers)
       const accessors = 'get;' + (!readonly ? ' set;' : '')
       return `public new ${type} ${name} { ${accessors} }`
     }
-    if (ts.isMethodSignature(member)) {
-      const ms = member as ts.MethodSignature
-      const name = getSafeName(member, context)
+    if (isMethodSignature(member)) {
+      const ms = member as MethodSignature
+      const name = getSafeName(member)
       const type = getTypeName(member.type!, context)
       const parameters = getParameterList(ms.parameters, context)
       return `public new ${type} ${name}(${parameters});`
@@ -131,25 +142,21 @@ function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
   })
 }
 
-export function getFileContent(sourceFile: ts.SourceFile): string[] {
+export function getFileContent(sourceFile: SourceFile): string[] {
   const context = { sourceFile }
   const interfaces: string[] = []
 
   for (const match of sourceFile.text.matchAll(
     /\/\/\/\s*<reference\s+lib="(?<libName>.*)"\s*\/>/g,
   )) {
-    interfaces.push(`// TODO: Referenced lib: ${match.groups!.libName}`)
+    interfaces.push(`// Referenced lib: ${match.groups!.libName}`)
   }
 
-  if (sourceFile.fileName.includes('lib.dom')) {
-    interfaces.push('public interface Error { }')
-  }
-
-  ts.forEachChild(sourceFile, (node) => {
-    if (ts.isInterfaceDeclaration(node)) {
+  forEachChild(sourceFile, (node) => {
+    if (isInterfaceDeclaration(node)) {
       const name = node.name.text
       // TODO Support generics
-      const baseTypes = getBaseTypes(node, context)
+      const baseTypes = getBaseTypes(node)
       const members = getMembers(node, context)
       const typeContent =
         members.length === 0 ? '' : `\n  ${members.join('\n  ')}\n`
