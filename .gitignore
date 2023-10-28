@@ -1,4 +1,6 @@
 /.idea/workspace.xml
+/src-dotnet/ECMAScript/
 build/
 dist/
 node_modules/
+obj/
