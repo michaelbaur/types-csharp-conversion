@@ -64,16 +64,24 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
 function getFunctionType(type: ts.FunctionTypeNode, context: Context): string {
   const returnType = getTypeName(type.type, context)
   const returnsVoid = returnType === 'void'
+  // skip this parameters - they don't actually exist
+  const parameters = [...type.parameters]
+  if (
+    parameters.length &&
+    parameters[0].name.getFullText(context.sourceFile) === 'this'
+  ) {
+    parameters.splice(0, 1)
+  }
   if (returnsVoid) {
     return (
       'Action<' +
-      type.parameters.map((p) => getTypeName(p.type!, context)).join(', ') +
+      parameters.map((p) => getTypeName(p.type!, context)).join(', ') +
       '>'
     )
   } else {
     return (
       'Func<' +
-      [...type.parameters.map((p) => p.type), type.type]
+      [...parameters.map((p) => p.type), type.type]
         .map((t) => getTypeName(t!, context))
         .join(', ') +
       '>'
