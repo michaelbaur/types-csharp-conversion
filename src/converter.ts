@@ -7,6 +7,7 @@ const disableWarnings = `// ReSharper disable InconsistentNaming, RedundantExten
 
 type Context = {
   sourceFile: ts.SourceFile
+  containingType?: string
 }
 
 const reservedNames: Record<string, boolean> = {
@@ -38,6 +39,8 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
       return 'object'
     case ts.SyntaxKind.VoidKeyword:
       return 'void'
+    case ts.SyntaxKind.ThisType:
+      return context.containingType!
     case ts.SyntaxKind.SymbolKeyword:
       return 'Symbol'
   }
@@ -59,12 +62,22 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
 }
 
 function getFunctionType(type: ts.FunctionTypeNode, context: Context): string {
-  const returnType = getTypeName(type.type, context);
+  const returnType = getTypeName(type.type, context)
   const returnsVoid = returnType === 'void'
   if (returnsVoid) {
-    return 'Action<' + type.parameters.map(p => getTypeName(p.type!, context)).join(', ') + '>'
+    return (
+      'Action<' +
+      type.parameters.map((p) => getTypeName(p.type!, context)).join(', ') +
+      '>'
+    )
   } else {
-    return 'Func<' + [...type.parameters.map(p => p.type), type.type].map(t => getTypeName(t!, context)).join(', ') + '>'
+    return (
+      'Func<' +
+      [...type.parameters.map((p) => p.type), type.type]
+        .map((t) => getTypeName(t!, context))
+        .join(', ') +
+      '>'
+    )
   }
 }
 
@@ -160,7 +173,7 @@ export function getFileContent(filename: string): string[] {
   const program = ts.createProgram([filename], { allowJs: true })
   const sourceFile = program.getSourceFile(filename)!
 
-  const context = { sourceFile }
+  const context: Context = { sourceFile }
   const namespace = getNamespace(filename)
 
   // TODO Parse types into usings
@@ -181,6 +194,7 @@ export function getFileContent(filename: string): string[] {
       const name = node.name.text
       // TODO Support generics
       const typeParameters = getTypeParameters(node)
+      context.containingType = `${name}${typeParameters}`
       const baseTypes = getBaseTypes(node)
       const members = getMembers(node, context)
       const typeContent =
@@ -189,6 +203,7 @@ export function getFileContent(filename: string): string[] {
       interfaces.push(
         `public partial interface ${name}${typeParameters} ${baseTypes} {${typeContent}}`,
       )
+      delete context.containingType
     }
   })
 
