@@ -44,6 +44,7 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
     case ts.SyntaxKind.BooleanKeyword:
       return 'bool'
     case ts.SyntaxKind.AnyKeyword:
+    case ts.SyntaxKind.UnknownKeyword:
       return 'object'
     case ts.SyntaxKind.VoidKeyword:
       return 'void'
