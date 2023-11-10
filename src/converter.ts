@@ -48,11 +48,24 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
   if (ts.isArrayTypeNode(type)) {
     return getTypeName(type.elementType, context) + '[]'
   }
+  if (ts.isFunctionTypeNode(type)) {
+    return getFunctionType(type, context)
+  }
 
   // TODO support more specific types, start with non-union types
   // TODO Support generics
   // TODO support for Nullable, CanBeUndefined (| null, | undefined)
   return `object /* ${type.getText(context.sourceFile)} */`
+}
+
+function getFunctionType(type: ts.FunctionTypeNode, context: Context): string {
+  const returnType = getTypeName(type.type, context);
+  const returnsVoid = returnType === 'void'
+  if (returnsVoid) {
+    return 'Action<' + type.parameters.map(p => getTypeName(p.type!, context)).join(', ') + '>'
+  } else {
+    return 'Func<' + [...type.parameters.map(p => p.type), type.type].map(t => getTypeName(t!, context)).join(', ') + '>'
+  }
 }
 
 function getSafeName(
