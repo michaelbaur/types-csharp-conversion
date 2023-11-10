@@ -8,6 +8,7 @@ const disableWarnings = `// ReSharper disable InconsistentNaming, RedundantExten
 type Context = {
   sourceFile: ts.SourceFile
   containingType?: string
+  elementName?: string
 }
 
 const reservedNames: Record<string, boolean> = {
@@ -32,6 +33,13 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
     case ts.SyntaxKind.StringKeyword:
       return 'string'
     case ts.SyntaxKind.NumberKeyword:
+      // try to guess better types in certain places
+      if (
+        context.elementName &&
+        context.elementName.match(/length|size|count|offset|index/i)
+      ) {
+        return 'int'
+      }
       return 'double'
     case ts.SyntaxKind.BooleanKeyword:
       return 'bool'
@@ -75,14 +83,28 @@ function getFunctionType(type: ts.FunctionTypeNode, context: Context): string {
   if (returnsVoid) {
     return (
       'Action<' +
-      parameters.map((p) => getTypeName(p.type!, context)).join(', ') +
+      parameters
+        .map((p) =>
+          getTypeName(p.type!, {
+            ...context,
+            elementName: p.name.getFullText(context.sourceFile),
+          }),
+        )
+        .join(', ') +
       '>'
     )
   } else {
     return (
       'Func<' +
-      [...parameters.map((p) => p.type), type.type]
-        .map((t) => getTypeName(t!, context))
+      [...parameters, type.type]
+        .map((t) =>
+          ts.isParameter(t)
+            ? getTypeName(t.type!, {
+                ...context,
+                elementName: t.name.getFullText(context.sourceFile),
+              })
+            : getTypeName(t, context),
+        )
         .join(', ') +
       '>'
     )
@@ -151,7 +173,10 @@ function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
     if (ts.isPropertySignature(member)) {
       // TODO support modifier, especially readonly
       const name = getSafeName(member)
-      const type = getTypeName(member.type!, context)
+      const type = getTypeName(member.type!, {
+        ...context,
+        elementName: name,
+      })
       const readonly = isReadonly(member.modifiers)
       const accessors = 'get;' + (!readonly ? ' set;' : '')
       return `public new ${type} ${name} { ${accessors} }`
@@ -159,7 +184,7 @@ function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
     if (ts.isMethodSignature(member)) {
       const ms = member as ts.MethodSignature
       const name = getSafeName(member)
-      const type = getTypeName(member.type!, context)
+      const type = getTypeName(member.type!, { ...context, elementName: name })
       const parameters = getParameterList(ms.parameters, context)
       return `public new ${type} ${name}(${parameters});`
     }
