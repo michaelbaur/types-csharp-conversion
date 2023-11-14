@@ -148,7 +148,11 @@ function getParameterList(
     .join(', ')
 }
 
-function getTypeParameters(node: ts.InterfaceDeclaration): string {
+function getTypeParameters(
+  node: ts.NamedDeclaration & {
+    typeParameters?: ts.NodeArray<ts.TypeParameterDeclaration>
+  },
+): string {
   if (!node.typeParameters?.length) {
     return ''
   }
@@ -183,11 +187,11 @@ function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
       return `public new ${type} ${name} { ${accessors} }`
     }
     if (ts.isMethodSignature(member)) {
-      const ms = member as ts.MethodSignature
       const name = getSafeName(member)
+      const typeParameters = getTypeParameters(member)
       const type = getTypeName(member.type!, { ...context, elementName: name })
-      const parameters = getParameterList(ms.parameters, context)
-      return `public new ${type} ${name}(${parameters});`
+      const parameters = getParameterList(member.parameters, context)
+      return `public new ${type} ${name}${typeParameters}(${parameters});`
     }
     return `// TODO: Unsupported member: ${member.getText(context.sourceFile)}`
   })
