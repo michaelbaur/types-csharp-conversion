@@ -3,6 +3,10 @@ import ts from 'typescript'
 const disableWarnings = `// ReSharper disable InconsistentNaming, RedundantExtendsListEntry, TypeParameterCanBeVariant
 #pragma warning disable CS0109 // Member does not hide an inherited member; new keyword is not required
 #pragma warning disable CS1591 // Missing XML comment for publicly visible type or member
+
+using ECMAScript.Decorators;
+using ECMAScript.DOM;
+using ECMAScript.Lib;
 `
 
 type Context = {
@@ -118,7 +122,18 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
   }
 
   if (ts.isTypeReferenceNode(type)) {
-    return (type.typeName as ts.Identifier).text
+    // TODO support readonly
+    const typeName = (type.typeName as ts.Identifier).text
+    return !Array.isArray(type.typeArguments) || type.typeArguments.length === 0
+      ? typeName
+      : `${typeName}<${type
+          .typeArguments!.map((type) =>
+            getTypeName(type, {
+              ...context,
+              elementName: type.getFullText(context.sourceFile),
+            }),
+          )
+          .join(', ')}>`
   }
   if (ts.isArrayTypeNode(type)) {
     return getTypeName(type.elementType, context) + '[]'
@@ -185,6 +200,26 @@ function getSafeName(
   return !reservedNames.has(name) ? name : `@${name}`
 }
 
+/**
+ * Does method-specific stuff and delegates to {@link getSafeName} for shared features.
+ */
+function getMethodName(member: ts.MethodSignature): string {
+  if (
+    ts.isComputedPropertyName(member.name) &&
+    ts.isPropertyAccessExpression(member.name.expression)
+  ) {
+    const pae = member.name.expression
+    if (
+      ts.isIdentifier(pae.expression) &&
+      pae.expression.escapedText == 'Symbol' &&
+      pae.name.escapedText === 'iterator'
+    ) {
+      return 'symbolIterator'
+    }
+  }
+  return getSafeName(member)
+}
+
 function isReadonly(modifiers: ts.NodeArray<ts.Modifier> | undefined): boolean {
   return (
     modifiers?.some((m) => ts.isReadonlyKeywordOrPlusOrMinusToken(m)) ?? false
@@ -244,7 +279,7 @@ function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
       return `public new ${type} ${name} { ${accessors} }`
     }
     if (ts.isMethodSignature(member)) {
-      const name = getSafeName(member)
+      const name = getMethodName(member)
       const typeParameters = getTypeParameters(member)
       const type = getTypeName(member.type!, { ...context, elementName: name })
       const parameters = getParameterList(member.parameters, context)
@@ -273,7 +308,7 @@ export function getFileContent(filename: string): string[] {
 
   // TODO Parse types into usings
 
-  const interfaces: string[] = [
+  const fileContent: string[] = [
     disableWarnings,
     `namespace ECMAScript.${namespace};`,
   ]
@@ -281,7 +316,7 @@ export function getFileContent(filename: string): string[] {
   for (const match of sourceFile.text.matchAll(
     /\/\/\/\s*<reference\s+lib="(?<libName>.*)"\s*\/>/g,
   )) {
-    interfaces.push(`// Referenced lib: ${match.groups!.libName}`)
+    fileContent.push(`// Referenced lib: ${match.groups!.libName}`)
   }
 
   ts.forEachChild(sourceFile, (node) => {
@@ -295,12 +330,18 @@ export function getFileContent(filename: string): string[] {
       const typeContent =
         members.length === 0 ? '' : `\n  ${members.join('\n  ')}\n`
 
-      interfaces.push(
+      fileContent.push(
         `public partial interface ${name}${typeParameters} ${baseTypes} {${typeContent}}`,
       )
       delete context.containingType
     }
+
+    if (ts.isTypeAliasDeclaration(node)) {
+      // TODO String unions should be string
+      // TODO Some aliases have type parameters
+      fileContent.push(`public abstract partial class ${node.name.escapedText} { }`)
+    }
   })
 
-  return interfaces
+  return fileContent
 }

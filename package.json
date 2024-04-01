@@ -4,14 +4,13 @@
   "description": "",
   "main": "src/index.ts",
   "scripts": {
-    "convert": "node ./dist/index.js ./node_modules/typescript/lib ./src-dotnet/ECMAScript",
-    "build": "tsc",
-    "watch": "tsc --watch"
+    "convert": "tsx ./src/index.ts ./node_modules/typescript/lib ./src-dotnet/ECMAScript"
   },
   "dependencies": {
     "fast-glob": "^3.3.0",
     "fs-extra": "^11.0.0",
-    "typescript": "^5.2.2"
+    "typescript": "^5.2.2",
+    "tsx": "~4.7.0"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.0",
@@ -31,8 +30,5 @@
     "semi": false,
     "singleQuote": true,
     "tabWidth": 2
-  },
-  "ts-node": {
-    "esm": true
   }
 }
