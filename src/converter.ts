@@ -1,13 +1,5 @@
 import ts from 'typescript'
-
-const disableWarnings = `// ReSharper disable InconsistentNaming, RedundantExtendsListEntry, TypeParameterCanBeVariant
-#pragma warning disable CS0109 // Member does not hide an inherited member; new keyword is not required
-#pragma warning disable CS1591 // Missing XML comment for publicly visible type or member
-
-using ECMAScript.Decorators;
-using ECMAScript.DOM;
-using ECMAScript.Lib;
-`
+import { reservedNames } from './reservedNames'
 
 type Context = {
   sourceFile: ts.SourceFile
@@ -15,85 +7,21 @@ type Context = {
   elementName?: string
 }
 
-const reservedNames: Set<string> = new Set([
-  'abstract',
-  'as',
-  'base',
-  'bool',
-  'break',
-  'byte',
-  'case',
-  'catch',
-  'char',
-  'checked',
-  'class',
-  'const',
-  'continue',
-  'decimal',
-  'default',
-  'delegate',
-  'do',
-  'double',
-  'else',
-  'enum',
-  'event',
-  'explicit',
-  'extern',
-  'false',
-  'finally',
-  'fixed',
-  'float',
-  'for',
-  'foreach',
-  'goto',
-  'if',
-  'implicit',
-  'in',
-  'int',
-  'interface',
-  'internal',
-  'is',
-  'lock',
-  'long',
-  'namespace',
-  'new',
-  'null',
-  'object',
-  'operator',
-  'out',
-  'override',
-  'params',
-  'private',
-  'protected',
-  'public',
-  'readonly',
-  'ref',
-  'return',
-  'sbyte',
-  'sealed',
-  'short',
-  'sizeof',
-  'stackalloc',
-  'static',
-  'string',
-  'struct',
-  'switch',
-  'this',
-  'throw',
-  'true',
-  'try',
-  'typeof',
-  'uint',
-  'ulong',
-  'unchecked',
-  'unsafe',
-  'ushort',
-  'using',
-  'virtual',
-  'void',
-  'volatile',
-  'while',
-])
+type Namespace = 'Worker' | 'Lib' | 'DOM' | 'Decorators'
+
+export function getHeader(namespace: Namespace): string[] {
+  return [`namespace ECMAScript.${namespace};`]
+}
+
+export function getNamespace(filename: string): Namespace {
+  return filename.includes('webworker')
+    ? 'Worker'
+    : // : filename.includes('dom')
+      // ? 'DOM'
+      // : filename.includes('decorators')
+      // ? 'Decorators'
+      'Lib'
+}
 
 function getTypeName(type: ts.TypeNode, context: Context): string {
   switch (type.kind) {
@@ -101,13 +29,9 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
       return 'string'
     case ts.SyntaxKind.NumberKeyword:
       // try to guess better types in certain places
-      if (
-        context.elementName &&
-        context.elementName.match(/length|size|count|offset|index/i)
-      ) {
-        return 'int'
-      }
-      return 'double'
+      return context.elementName?.match(/length|size|count|offset|index/i)
+        ? 'int'
+        : 'double'
     case ts.SyntaxKind.BooleanKeyword:
       return 'bool'
     case ts.SyntaxKind.AnyKeyword:
@@ -116,24 +40,22 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
     case ts.SyntaxKind.VoidKeyword:
       return 'void'
     case ts.SyntaxKind.ThisType:
-      return context.containingType!
+      return context!.containingType!
     case ts.SyntaxKind.SymbolKeyword:
       return 'Symbol'
   }
 
   if (ts.isTypeReferenceNode(type)) {
-    // TODO support readonly
     const typeName = (type.typeName as ts.Identifier).text
-    return !Array.isArray(type.typeArguments) || type.typeArguments.length === 0
-      ? typeName
-      : `${typeName}<${type
-          .typeArguments!.map((type) =>
-            getTypeName(type, {
-              ...context,
-              elementName: type.getFullText(context.sourceFile),
-            }),
-          )
-          .join(', ')}>`
+    if (!Array.isArray(type.typeArguments) || type.typeArguments.length === 0) {
+      return typeName
+    }
+    const typeList = type
+      .typeArguments!.map((type) =>
+        getTypeName(type, createContext(type, context)),
+      )
+      .map((name) => (name === 'void' ? 'Void' : name))
+    return `${typeName}<${typeList.join(', ')}>`
   }
   if (ts.isArrayTypeNode(type)) {
     return getTypeName(type.elementType, context) + '[]'
@@ -141,53 +63,47 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
   if (ts.isFunctionTypeNode(type)) {
     return getFunctionType(type, context)
   }
+  if (ts.isTypeLiteralNode(type)) {
+    // type literals can contain multiple lines and comments, so we don't
+    // include the plain text
+    return `object /* some type literal */`
+  }
 
   // TODO support more specific types, start with non-union types
   // TODO Support generics
   // TODO support for Nullable, CanBeUndefined (| null, | undefined)
-  return `object /* ${type.getText(context.sourceFile)} */`
+  return `object /* ${type.getText(context!.sourceFile)} */`
 }
 
 function getFunctionType(type: ts.FunctionTypeNode, context: Context): string {
   const returnType = getTypeName(type.type, context)
   const returnsVoid = returnType === 'void'
-  // skip this parameters - they don't actually exist
+  // skip these parameters - they don't actually exist
   const parameters = [...type.parameters]
   if (
     parameters.length &&
+    context &&
     parameters[0].name.getFullText(context.sourceFile) === 'this'
   ) {
     parameters.splice(0, 1)
   }
+
   if (returnsVoid) {
-    return (
-      'Action<' +
-      parameters
-        .map((p) =>
-          getTypeName(p.type!, {
-            ...context,
-            elementName: p.name.getFullText(context.sourceFile),
-          }),
-        )
-        .join(', ') +
-      '>'
+    if (parameters.length == 0) {
+      return 'Action'
+    }
+    const typeList = parameters.map((p) =>
+      getTypeName(p.type!, createContext(p.name, context)),
     )
-  } else {
-    return (
-      'Func<' +
-      [...parameters, type.type]
-        .map((t) =>
-          ts.isParameter(t)
-            ? getTypeName(t.type!, {
-                ...context,
-                elementName: t.name.getFullText(context.sourceFile),
-              })
-            : getTypeName(t, context),
-        )
-        .join(', ') +
-      '>'
-    )
+    return 'Action<' + typeList.join(', ') + '>'
   }
+
+  const typeList = [...parameters, type.type].map((t) =>
+    ts.isParameter(t)
+      ? getTypeName(t.type!, createContext(t.name, context))
+      : getTypeName(t, context),
+  )
+  return 'Func<' + typeList.join(', ') + '>'
 }
 
 function getSafeName(
@@ -196,8 +112,24 @@ function getSafeName(
   const name = ts.isIdentifier(member)
     ? member.text
     : (member.name as ts.StringLiteral).text
-  // TODO Improve writing of reserved member names
-  return !reservedNames.has(name) ? name : `@${name}`
+  if (name == null) {
+    // TODO Don't return an empty name
+    return ''
+  }
+  if (name.startsWith('$')) {
+    return name
+      .replace('$', 'dollar')
+      .replace('+', 'Plus')
+      .replace('&', 'Amp')
+      .replace('`', 'BackTick')
+      .replace("'", 'Apo')
+  }
+
+  return reservedNames.has(name)
+    ? `@${name}`
+    : name.match(/(^\d+$)/)
+    ? `number${name}`
+    : name.replaceAll('-', '_')
 }
 
 /**
@@ -218,6 +150,10 @@ function getMethodName(member: ts.MethodSignature): string {
     }
   }
   return getSafeName(member)
+}
+
+function createContext(node: ts.Node, context: Context) {
+  return { ...context, elementName: node.getFullText(context.sourceFile) }
 }
 
 function isReadonly(modifiers: ts.NodeArray<ts.Modifier> | undefined): boolean {
@@ -252,23 +188,27 @@ function getTypeParameters(
   return `<${parameters.join(', ')}>`
 }
 
-function getBaseTypes(node: ts.InterfaceDeclaration): string {
+function getBaseTypes(node: ts.InterfaceDeclaration, context: Context): string {
   if (!node.heritageClauses) {
     return ''
   }
 
-  const typeNames = node.heritageClauses[0].types.map(
-    // TODO Support generics
-    // TODO Call getTypeName
-    (value) => (value.expression as ts.Identifier).text,
-  )
+  const typeNames = node.heritageClauses[0].types.map((type) => {
+    const typeName = (type.expression as ts.Identifier).text
+    return !Array.isArray(type.typeArguments) || type.typeArguments.length === 0
+      ? typeName
+      : `${typeName}<${type
+          .typeArguments!.map((type) =>
+            getTypeName(type, createContext(type, context)),
+          )
+          .join(', ')}>`
+  })
   return `: ${typeNames.join(', ')} `
 }
 
 function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
   return node.members.map((member) => {
     if (ts.isPropertySignature(member)) {
-      // TODO support modifier, especially readonly
       const name = getSafeName(member)
       const type = getTypeName(member.type!, {
         ...context,
@@ -289,29 +229,15 @@ function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
   })
 }
 
-export function getNamespace(filename: string) {
-  return filename.includes('dom')
-    ? 'DOM'
-    : filename.includes('webworker')
-    ? 'Worker'
-    : filename.includes('decorators')
-    ? 'Decorators'
-    : 'Lib'
-}
-
 export function getFileContent(filename: string): string[] {
   const program = ts.createProgram([filename], { allowJs: true })
   const sourceFile = program.getSourceFile(filename)!
 
   const context: Context = { sourceFile }
-  const namespace = getNamespace(filename)
 
   // TODO Parse types into usings
 
-  const fileContent: string[] = [
-    disableWarnings,
-    `namespace ECMAScript.${namespace};`,
-  ]
+  const fileContent: string[] = []
 
   for (const match of sourceFile.text.matchAll(
     /\/\/\/\s*<reference\s+lib="(?<libName>.*)"\s*\/>/g,
@@ -325,7 +251,7 @@ export function getFileContent(filename: string): string[] {
       // TODO Support generics
       const typeParameters = getTypeParameters(node)
       context.containingType = `${name}${typeParameters}`
-      const baseTypes = getBaseTypes(node)
+      const baseTypes = getBaseTypes(node, context)
       const members = getMembers(node, context)
       const typeContent =
         members.length === 0 ? '' : `\n  ${members.join('\n  ')}\n`
@@ -339,7 +265,9 @@ export function getFileContent(filename: string): string[] {
     if (ts.isTypeAliasDeclaration(node)) {
       // TODO String unions should be string
       // TODO Some aliases have type parameters
-      fileContent.push(`public abstract partial class ${node.name.escapedText} { }`)
+      fileContent.push(
+        `public abstract partial class ${node.name.escapedText} { }`,
+      )
     }
   })
 

@@ -1,7 +1,7 @@
 import fg from 'fast-glob'
 import fs from 'fs-extra'
 import * as path from 'node:path'
-import { getFileContent, getNamespace } from './converter.js'
+import { getFileContent, getHeader, getNamespace } from './converter.js'
 
 const toolName = 'Types-C#-Conversion'
 
@@ -12,25 +12,28 @@ function convertFile(filename: string, targetDir: string): void {
     `${path.basename(filename, `.d.ts`)}.cs`,
   )
 
-  const types = getFileContent(filename)
+  const header = getHeader(namespace)
+  const fileContents = getFileContent(filename)
   console.log(`[${toolName}] Converted ${filename}`)
 
   const pagination = 300
-  if (types.length < pagination) {
-    fs.writeFileSync(targetFile, types.join('\n\n'))
+  if (fileContents.length < pagination) {
+    fs.writeFileSync(targetFile, header.concat(fileContents).join('\n\n'))
     return
   }
-  for (let i = 0; i * pagination < types.length; i++) {
+  for (let i = 0; i * pagination < fileContents.length; i++) {
     fs.writeFileSync(
       targetFile.replace('.cs', `.p${i}.cs`),
-      types.slice(i * pagination, (i + 1) * pagination).join('\n\n'),
+      header
+        .concat(fileContents.slice(i * pagination, (i + 1) * pagination))
+        .join('\n\n'),
     )
   }
 }
 
 async function convertDir(dirName: string, targetDir: string): Promise<void> {
-  fs.emptyDirSync(path.join(targetDir, 'DOM'))
-  fs.emptyDirSync(path.join(targetDir, 'Decorators'))
+  // fs.emptyDirSync(path.join(targetDir, 'Decorators'))
+  // fs.emptyDirSync(path.join(targetDir, 'DOM'))
   fs.emptyDirSync(path.join(targetDir, 'Lib'))
   fs.emptyDirSync(path.join(targetDir, 'Worker'))
 
