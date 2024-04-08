@@ -42,4 +42,6 @@ public interface WritableStream : WritableStream<object> { }
 
 public abstract class Void {}
 
+public abstract class Null {}
+
 public abstract class VarDate {}

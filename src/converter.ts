@@ -6,6 +6,7 @@ type Context = {
   containingType?: string
   elementName?: string
   typeList?: boolean
+  returnValue?: boolean
 }
 
 type Namespace = 'Worker' | 'Lib' | 'DOM' | 'Decorators'
@@ -50,7 +51,7 @@ function getTypeName(type: ts.TypeNode, context: Context): string | null {
       return 'object'
     case ts.SyntaxKind.UndefinedKeyword:
     case ts.SyntaxKind.NullKeyword:
-      return context.typeList ? null : 'null'
+      return context.typeList ? null : context.returnValue ? 'Null' : 'null'
     case ts.SyntaxKind.VoidKeyword:
       return context.typeList ? 'Void' : 'void'
     case ts.SyntaxKind.ThisType:
@@ -76,7 +77,7 @@ function getTypeName(type: ts.TypeNode, context: Context): string | null {
       type.literal.kind === ts.SyntaxKind.NullKeyword ||
       type.literal.kind === ts.SyntaxKind.UndefinedKeyword
     ) {
-      return null
+      return context.returnValue ? 'Null' : null
     }
     throw new Error(
       `Unsupported literal type: ${type.getText(context!.sourceFile)}`,
@@ -264,6 +265,7 @@ function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
       const type = getTypeName(member.type!, {
         ...context,
         elementName: name,
+        returnValue: true,
       })
       const readonly = isReadonly(member.modifiers)
       const accessors = 'get;' + (!readonly ? ' set;' : '')
@@ -272,7 +274,11 @@ function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
     if (ts.isMethodSignature(member)) {
       const name = getMethodName(member)
       const typeParameters = getTypeParameters(member)
-      const type = getTypeName(member.type!, { ...context, elementName: name })
+      const type = getTypeName(member.type!, {
+        ...context,
+        elementName: name,
+        returnValue: true,
+      })
       const parameters = getParameterList(member.parameters, context)
       return `public new ${type} ${name}${typeParameters}(${parameters});`
     }
