@@ -32,6 +32,10 @@ public interface IDBRequest : IDBRequest<object> { }
 
 public interface MessageEvent : MessageEvent<object> { }
 
+public interface QueuingStrategy : QueuingStrategy<object> { }
+
+public interface QueuingStrategySize : QueuingStrategySize<object> { }
+
 public interface ReadableStream : ReadableStream<object> { }
 
 public interface WritableStream : WritableStream<object> { }

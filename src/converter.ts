@@ -11,11 +11,12 @@ type Namespace = 'Worker' | 'Lib' | 'DOM' | 'Decorators'
 
 export function getHeader(namespace: Namespace): string[] {
   if (namespace === 'Lib') {
-    return [`namespace ECMAScript.${namespace};`]
+    return ['using ECMAScript.Stubs;', `namespace ECMAScript.${namespace};`]
   }
 
   return [
     'using ECMAScript.Lib;',
+    'using ECMAScript.Stubs;',
     'using Void = ECMAScript.Lib.Void;\n',
     `namespace ECMAScript.${namespace};`,
   ]
@@ -70,6 +71,12 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
   }
   if (ts.isFunctionTypeNode(type)) {
     return getFunctionType(type, context)
+  }
+  if (ts.isUnionTypeNode(type)) {
+    const typeList = type
+      .types!.map((type) => getTypeName(type, createContext(type, context)))
+      .map((name) => (name === 'void' ? 'Void' : name))
+    return `Union<${typeList.join(', ')}>`
   }
   if (ts.isTypeLiteralNode(type)) {
     // type literals can contain multiple lines and comments, so we don't
