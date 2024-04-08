@@ -10,7 +10,15 @@ type Context = {
 type Namespace = 'Worker' | 'Lib' | 'DOM' | 'Decorators'
 
 export function getHeader(namespace: Namespace): string[] {
-  return [`namespace ECMAScript.${namespace};`]
+  if (namespace === 'Lib') {
+    return [`namespace ECMAScript.${namespace};`]
+  }
+
+  return [
+    'using ECMAScript.Lib;',
+    'using Void = ECMAScript.Lib.Void;\n',
+    `namespace ECMAScript.${namespace};`,
+  ]
 }
 
 export function getNamespace(filename: string): Namespace {
