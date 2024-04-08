@@ -5,6 +5,7 @@ type Context = {
   sourceFile: ts.SourceFile
   containingType?: string
   elementName?: string
+  typeList?: boolean
 }
 
 type Namespace = 'Worker' | 'Lib' | 'DOM' | 'Decorators'
@@ -32,7 +33,7 @@ export function getNamespace(filename: string): Namespace {
       'Lib'
 }
 
-function getTypeName(type: ts.TypeNode, context: Context): string {
+function getTypeName(type: ts.TypeNode, context: Context): string | null {
   switch (type.kind) {
     case ts.SyntaxKind.StringKeyword:
       return 'string'
@@ -45,25 +46,50 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
       return 'bool'
     case ts.SyntaxKind.AnyKeyword:
     case ts.SyntaxKind.UnknownKeyword:
+    case ts.SyntaxKind.ObjectKeyword:
       return 'object'
+    case ts.SyntaxKind.UndefinedKeyword:
+    case ts.SyntaxKind.NullKeyword:
+      return context.typeList ? null : 'null'
     case ts.SyntaxKind.VoidKeyword:
-      return 'void'
+      return context.typeList ? 'Void' : 'void'
     case ts.SyntaxKind.ThisType:
-      return context!.containingType!
+      return context.containingType!
     case ts.SyntaxKind.SymbolKeyword:
       return 'Symbol'
   }
 
+  if (ts.isLiteralTypeNode(type)) {
+    if (ts.isStringLiteral(type.literal)) {
+      return `string /* ${type.getText(context!.sourceFile)} */`
+    } else if (
+      ts.isNumericLiteral(type.literal) ||
+      ts.isPrefixUnaryExpression(type.literal)
+    ) {
+      return `int /* ${type.getText(context!.sourceFile)} */`
+    } else if (
+      type.literal.kind === ts.SyntaxKind.TrueKeyword ||
+      type.literal.kind === ts.SyntaxKind.FalseKeyword
+    ) {
+      return `bool /* ${type.getText(context!.sourceFile)} */`
+    } else if (
+      type.literal.kind === ts.SyntaxKind.NullKeyword ||
+      type.literal.kind === ts.SyntaxKind.UndefinedKeyword
+    ) {
+      return null
+    }
+    throw new Error(
+      `Unsupported literal type: ${type.getText(context!.sourceFile)}`,
+    )
+  }
   if (ts.isTypeReferenceNode(type)) {
     const typeName = (type.typeName as ts.Identifier).text
     if (!Array.isArray(type.typeArguments) || type.typeArguments.length === 0) {
       return typeName
     }
-    const typeList = type
-      .typeArguments!.map((type) =>
-        getTypeName(type, createContext(type, context)),
-      )
-      .map((name) => (name === 'void' ? 'Void' : name))
+    const typeList = type.typeArguments!.map((type) =>
+      getTypeName(type, createContext(context, type, true)),
+    )
     return `${typeName}<${typeList.join(', ')}>`
   }
   if (ts.isArrayTypeNode(type)) {
@@ -74,9 +100,17 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
   }
   if (ts.isUnionTypeNode(type)) {
     const typeList = type
-      .types!.map((type) => getTypeName(type, createContext(type, context)))
-      .map((name) => (name === 'void' ? 'Void' : name))
-    return `Union<${typeList.join(', ')}>`
+      .types!.map((type) =>
+        getTypeName(type, createContext(context, type, true)),
+      )
+      .filter((name) => name != null)
+    // Currently, null and undefined are the only types we filter out.
+    // So, if the lengths are different, we know it's because of one of them
+    const containsNull = type.types!.length !== typeList.length
+
+    const typeListPart =
+      typeList.length === 1 ? `${typeList[0]}` : `Union<${typeList.join(', ')}>`
+    return typeListPart + (containsNull ? '?' : '')
   }
   if (ts.isTypeLiteralNode(type)) {
     // type literals can contain multiple lines and comments, so we don't
@@ -84,10 +118,8 @@ function getTypeName(type: ts.TypeNode, context: Context): string {
     return `object /* some type literal */`
   }
 
-  // TODO support more specific types, start with non-union types
-  // TODO Support generics
-  // TODO support for Nullable, CanBeUndefined (| null, | undefined)
-  return `object /* ${type.getText(context!.sourceFile)} */`
+  const text = type.getText(context!.sourceFile).replaceAll('\n', '; ')
+  return `object /* ${text} */`
 }
 
 function getFunctionType(type: ts.FunctionTypeNode, context: Context): string {
@@ -108,14 +140,14 @@ function getFunctionType(type: ts.FunctionTypeNode, context: Context): string {
       return 'Action'
     }
     const typeList = parameters.map((p) =>
-      getTypeName(p.type!, createContext(p.name, context)),
+      getTypeName(p.type!, createContext(context, p.name)),
     )
     return 'Action<' + typeList.join(', ') + '>'
   }
 
   const typeList = [...parameters, type.type].map((t) =>
     ts.isParameter(t)
-      ? getTypeName(t.type!, createContext(t.name, context))
+      ? getTypeName(t.type!, createContext(context, t.name))
       : getTypeName(t, context),
   )
   return 'Func<' + typeList.join(', ') + '>'
@@ -167,8 +199,12 @@ function getMethodName(member: ts.MethodSignature): string {
   return getSafeName(member)
 }
 
-function createContext(node: ts.Node, context: Context) {
-  return { ...context, elementName: node.getFullText(context.sourceFile) }
+function createContext(context: Context, node: ts.Node, typeList = false) {
+  return {
+    ...context,
+    elementName: node.getFullText(context.sourceFile),
+    typeList,
+  }
 }
 
 function isReadonly(modifiers: ts.NodeArray<ts.Modifier> | undefined): boolean {
@@ -214,7 +250,7 @@ function getBaseTypes(node: ts.InterfaceDeclaration, context: Context): string {
       ? typeName
       : `${typeName}<${type
           .typeArguments!.map((type) =>
-            getTypeName(type, createContext(type, context)),
+            getTypeName(type, createContext(context, type)),
           )
           .join(', ')}>`
   })
