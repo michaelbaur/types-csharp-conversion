@@ -6,6 +6,10 @@ import { getFileContent, getHeader, getNamespace } from './converter.js'
 const toolName = 'Types-C#-Conversion'
 
 function convertFile(filename: string, targetDir: string): void {
+  if (filename.includes('symbol.wellknown')) {
+    console.log(`[${toolName}] Skipped ${filename}`)
+    return
+  }
   const namespace = getNamespace(filename)
   const targetFile = path.join(
     path.join(targetDir, namespace),

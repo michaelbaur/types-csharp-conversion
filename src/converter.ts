@@ -1,5 +1,6 @@
 import ts from 'typescript'
 import { reservedNames } from './reservedNames'
+import { excludedMembers, excludedTypes } from './excludes'
 
 type Context = {
   sourceFile: ts.SourceFile
@@ -11,14 +12,19 @@ type Context = {
 
 type Namespace = 'Worker' | 'Lib' | 'DOM' | 'Decorators'
 
+const seenTypeNames = new Set<string>()
+
 export function getHeader(namespace: Namespace): string[] {
   if (namespace === 'Lib') {
-    return ['using ECMAScript.Stubs;', `namespace ECMAScript.${namespace};`]
+    return [
+      'using yWorks.Blunter.Annotations;',
+      `namespace ECMAScript.${namespace};`,
+    ]
   }
 
   return [
     'using ECMAScript.Lib;',
-    'using ECMAScript.Stubs;',
+    'using yWorks.Blunter.Annotations;',
     'using Void = ECMAScript.Lib.Void;\n',
     `namespace ECMAScript.${namespace};`,
   ]
@@ -50,6 +56,7 @@ function getTypeName(type: ts.TypeNode, context: Context): string | null {
     case ts.SyntaxKind.ObjectKeyword:
       return 'object'
     case ts.SyntaxKind.UndefinedKeyword:
+      return context.returnValue || context.typeList ? 'Undefined' : 'null'
     case ts.SyntaxKind.NullKeyword:
       return context.typeList ? null : context.returnValue ? 'Null' : 'null'
     case ts.SyntaxKind.VoidKeyword:
@@ -84,6 +91,9 @@ function getTypeName(type: ts.TypeNode, context: Context): string | null {
     )
   }
   if (ts.isTypeReferenceNode(type)) {
+    if (ts.isQualifiedName(type.typeName)) {
+      return `object /* ${type.typeName.getText(context.sourceFile)} */`
+    }
     const typeName = (type.typeName as ts.Identifier).text
     if (!Array.isArray(type.typeArguments) || type.typeArguments.length === 0) {
       return typeName
@@ -155,14 +165,22 @@ function getFunctionType(type: ts.FunctionTypeNode, context: Context): string {
 }
 
 function getSafeName(
-  member: ts.PropertySignature | ts.MethodSignature | ts.Identifier,
+  member:
+    | ts.PropertySignature
+    | ts.MethodSignature
+    | ts.Identifier
+    | ts.ComputedPropertyName,
 ): string {
+  if (ts.isComputedPropertyName(member)) {
+    return member.getText()
+  }
+
   const name = ts.isIdentifier(member)
     ? member.text
     : (member.name as ts.StringLiteral).text
   if (name == null) {
-    // TODO Don't return an empty name
-    return ''
+    // TODO Find the actual name
+    return `NotDetected`
   }
   if (name.startsWith('$')) {
     return name
@@ -258,6 +276,13 @@ function getBaseTypes(node: ts.InterfaceDeclaration, context: Context): string {
   return `: ${typeNames.join(', ')} `
 }
 
+function getMemberExcluded(containingType: string | undefined, name: string) {
+  return name === 'NotDetected' ||
+    excludedMembers.has(`${containingType}.${name}`)
+    ? '// Member excluded: '
+    : ''
+}
+
 function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
   return node.members.map((member) => {
     if (ts.isPropertySignature(member)) {
@@ -269,7 +294,8 @@ function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
       })
       const readonly = isReadonly(member.modifiers)
       const accessors = 'get;' + (!readonly ? ' set;' : '')
-      return `public new ${type} ${name} { ${accessors} }`
+      const memberExcluded = getMemberExcluded(context.containingType, name)
+      return `${memberExcluded}public new ${type} ${name} { ${accessors} }`
     }
     if (ts.isMethodSignature(member)) {
       const name = getMethodName(member)
@@ -280,10 +306,19 @@ function getMembers(node: ts.InterfaceDeclaration, context: Context): string[] {
         returnValue: true,
       })
       const parameters = getParameterList(member.parameters, context)
-      return `public new ${type} ${name}${typeParameters}(${parameters});`
+      const memberExcluded = getMemberExcluded(context.containingType, name)
+      return `${memberExcluded}public new ${type} ${name}${typeParameters}(${parameters});`
     }
     return `// TODO: Unsupported member: ${member.getText(context.sourceFile)}`
   })
+}
+
+function getStubAttribute(name: string) {
+  if (seenTypeNames.has(name)) {
+    return ''
+  }
+  seenTypeNames.add(name)
+  return '[Stub]\n'
 }
 
 export function getFileContent(filename: string): string[] {
@@ -306,15 +341,23 @@ export function getFileContent(filename: string): string[] {
     if (ts.isInterfaceDeclaration(node)) {
       const name = node.name.text
       // TODO Support generics
+      const stubAttribute = getStubAttribute(name)
       const typeParameters = getTypeParameters(node)
       context.containingType = `${name}${typeParameters}`
       const baseTypes = getBaseTypes(node, context)
       const members = getMembers(node, context)
+
+      if (excludedTypes.has(name)) {
+        fileContent.push(
+          `${stubAttribute}public partial interface ${name}${typeParameters} ${baseTypes} {\n  // Content excluded\n}`,
+        )
+        return
+      }
+
       const typeContent =
         members.length === 0 ? '' : `\n  ${members.join('\n  ')}\n`
-
       fileContent.push(
-        `public partial interface ${name}${typeParameters} ${baseTypes} {${typeContent}}`,
+        `${stubAttribute}public partial interface ${name}${typeParameters} ${baseTypes} {${typeContent}}`,
       )
       delete context.containingType
     }
@@ -322,8 +365,10 @@ export function getFileContent(filename: string): string[] {
     if (ts.isTypeAliasDeclaration(node)) {
       // TODO String unions should be string
       // TODO Some aliases have type parameters
+      const name = node.name.escapedText.toString()
+      const stubAttribute = getStubAttribute(name)
       fileContent.push(
-        `public abstract partial class ${node.name.escapedText} { }`,
+        `${stubAttribute}public abstract partial class ${name} { }`,
       )
     }
   })
